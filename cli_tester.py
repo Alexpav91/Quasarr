@@ -28,6 +28,7 @@ try:
     from prompt_toolkit.layout.containers import HSplit, Window
     from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.layout.layout import Layout
+    from prompt_toolkit.utils import get_cwidth
     from rich.console import Console
     from rich.panel import Panel
     from rich.progress import (
@@ -103,7 +104,23 @@ BASE_CATEGORY_ICONS = {
     5000: "📺",
     7000: "📚",
 }
-ANIME_CATEGORY_ICON = "⛩️ "
+ANIME_CATEGORY_ICON = "⛩️"
+
+SEARCH_CATEGORY_CACHE_FAMILIES = {
+    2000: (2000, 2040, 2045),
+    3000: (3000, 3010, 3040),
+    5000: (5000, 5040, 5045),
+    5070: (5070,),
+    5080: (5080,),
+    6000: (6000,),
+    7000: (7000,),
+}
+
+SEARCH_CACHE_OWNER_BY_CATEGORY = {
+    category_id: owner_id
+    for owner_id, category_ids in SEARCH_CATEGORY_CACHE_FAMILIES.items()
+    for category_id in category_ids
+}
 
 console = Console()
 IS_TTY = sys.stdin.isatty()
@@ -333,7 +350,7 @@ class PaginatedSelector:
 
         for i in range(start, end):
             label, _ = self.items[i]
-            safe_label = escape(label)
+            safe_label = escape(normalize_menu_label(label))
 
             if i == self.selected_index:
                 lines.append(HTML(f"<reverse>  {safe_label}  </reverse>"))
@@ -449,7 +466,7 @@ class MenuSelector:
         lines.append(HTML(""))
 
         for i, (label, _) in enumerate(self.items):
-            safe_label = escape(label)
+            safe_label = escape(normalize_menu_label(label))
             if i == self.selected_index:
                 lines.append(HTML(f"<reverse>  {safe_label}  </reverse>"))
             else:
@@ -605,6 +622,36 @@ def validate_imdb(text):
     return bool(re.match(r"^tt\d+$", text))
 
 
+def normalize_menu_label(label):
+    """
+    Normalize selector labels containing leading icon tokens.
+
+    Emoji width varies across terminals/fonts. Keep emoji on the left and align
+    text using a fixed display-width icon column.
+    """
+    if not isinstance(label, str):
+        return str(label)
+    label = label.replace("\t", " ")
+
+    stripped = label.lstrip()
+    if not stripped:
+        return label
+
+    leading_spaces = len(label) - len(stripped)
+    parts = stripped.split(maxsplit=1)
+    if len(parts) < 2:
+        return label
+
+    icon, text = parts
+    if re.search(r"[A-Za-z0-9]", icon):
+        return label
+
+    icon_width = get_cwidth(icon)
+    icon_column_width = 2
+    spacing = max(1, icon_column_width - icon_width + 1)
+    return f"{' ' * leading_spaces}{icon}{' ' * spacing}{text}"
+
+
 def is_main_search_category_id(cat_id):
     try:
         cat_id = int(cat_id)
@@ -645,6 +692,39 @@ def get_base_search_category_id(cat_id):
     return base if base > 0 else None
 
 
+def get_search_cache_owner_category_id(cat_id):
+    try:
+        cat_id = int(cat_id)
+    except (TypeError, ValueError):
+        return cat_id
+
+    if cat_id >= 100000:
+        return cat_id
+
+    return SEARCH_CACHE_OWNER_BY_CATEGORY.get(cat_id, cat_id)
+
+
+def get_search_cache_family_groups(categories):
+    grouped = {}
+    for category in categories:
+        owner_id = get_search_cache_owner_category_id(category.get("category_id"))
+        grouped.setdefault(owner_id, []).append(category)
+
+    return [
+        (
+            owner_id,
+            sorted(
+                grouped[owner_id],
+                key=lambda category: (
+                    category.get("category_id") or 0,
+                    category.get("key") or "",
+                ),
+            ),
+        )
+        for owner_id in sorted(grouped)
+    ]
+
+
 # --- API Client ---
 class QuasarrClient:
     def __init__(self, url, api_key):
@@ -652,6 +732,36 @@ class QuasarrClient:
         self.api_key = api_key
         self.session = requests.Session()
         self._search_caps = None
+        self._search_input_state = {}
+
+    def get_search_input_state(self, category_key):
+        """
+        Returns remembered search input defaults for a category key.
+        """
+        state = self._search_input_state.get(category_key) or {}
+        return {
+            "query": state.get("query"),
+            "season": state.get("season"),
+            "episode": state.get("episode"),
+        }
+
+    def remember_search_input_state(
+        self, category_key, query=None, season=None, episode=None
+    ):
+        """
+        Remembers user-entered search defaults for a category key.
+        """
+        if not category_key:
+            return
+
+        state = self._search_input_state.get(category_key, {})
+        if query is not None:
+            state["query"] = str(query)
+        if season is not None:
+            state["season"] = str(season)
+        if episode is not None:
+            state["episode"] = str(episode)
+        self._search_input_state[category_key] = state
 
     def _get(self, params, user_agent):
         request_params = params.copy()
@@ -693,10 +803,19 @@ class QuasarrClient:
 
     def wait_for_linkgrabber_idle(self, timeout=120, poll_interval=2):
         end_time = time.time() + timeout
+        not_grabbing_streak = 0
+
         while time.time() < end_time:
             _, _, state = self.get_downloads()
-            if state.get("is_stopped") or not state.get("is_collecting"):
-                return True
+            not_grabbing = state.get("is_stopped") or not state.get("is_collecting")
+            if not_grabbing:
+                not_grabbing_streak += 1
+                if not_grabbing_streak >= 2:
+                    return True
+                # First "not grabbing" can be transient, confirm after 3 seconds.
+                time.sleep(3)
+                continue
+            not_grabbing_streak = 0
             time.sleep(poll_interval)
         return False
 
@@ -1367,32 +1486,39 @@ def handle_searches_menu(client):
         if not selected_category:
             continue
 
+        remembered_inputs = client.get_search_input_state(choice)
         validator = (
             validate_imdb if selected_category["query_validator"] == "imdb" else None
         )
         q = TextInput(
             selected_category["query_prompt"],
-            default=selected_category["default_query"],
+            default=remembered_inputs.get("query")
+            or selected_category["default_query"],
             validator=validator,
         ).run()
         if not q:
             continue
+        client.remember_search_input_state(choice, query=q)
 
         clear_screen()
         start = time.time()
 
         if selected_category["supports_season_episode"]:
             s = TextInput(
-                f"{selected_category['category_name']}: {q}\nSeason", default="1"
+                f"{selected_category['category_name']}: {q}\nSeason",
+                default=remembered_inputs.get("season") or "1",
             ).run()
             if s is None:
                 continue
+            client.remember_search_input_state(choice, season=s)
             clear_screen()
             e = TextInput(
-                f"{selected_category['category_name']}: {q} S{s}\nEpisode", default="1"
+                f"{selected_category['category_name']}: {q} S{s}\nEpisode",
+                default=remembered_inputs.get("episode") or "1",
             ).run()
             if e is None:
                 continue
+            client.remember_search_input_state(choice, episode=e)
             clear_screen()
             res = LoadingScreen(
                 f"Searching {selected_category['category_name']}: {q}",
@@ -1435,26 +1561,15 @@ def handle_hostname_test(client, interactive=True):
         for category in available_categories
     }
     feed_keys = [category["key"] for category in available_categories]
-    sorted_categories_for_fetch = sorted(
-        available_categories,
-        key=lambda category: (
-            0 if is_main_priority_search_category(category) else 1,
-            get_base_search_category_id(category.get("category_id")) or 0,
-            category.get("category_id") or 0,
-            category.get("key") or "",
-        ),
-    )
-    main_priority_feeds = [
-        (category["key"], category["download_category"])
-        for category in sorted_categories_for_fetch
-        if is_main_priority_search_category(category)
+    cache_family_groups = get_search_cache_family_groups(available_categories)
+    feed_groups = [
+        [
+            (category["key"], category["download_category"])
+            for category in group_categories
+        ]
+        for _, group_categories in cache_family_groups
     ]
-    subcategory_feeds = [
-        (category["key"], category["download_category"])
-        for category in sorted_categories_for_fetch
-        if not is_main_priority_search_category(category)
-    ]
-    feeds = main_priority_feeds + subcategory_feeds
+    feeds = [feed for group in feed_groups for feed in group]
     if not feeds:
         console.print(
             "[bold red]Error: No feed categories are currently exposed by /api?t=caps.[/bold red]"
@@ -1473,74 +1588,72 @@ def handle_hostname_test(client, interactive=True):
             TextColumn("[progress.description]{task.description}"),
             transient=True,
         ) as progress:
-            main_priority_feed_keys = {feed_key for feed_key, _ in main_priority_feeds}
+            feed_group_positions = {}
+            for group in feed_groups:
+                for position, (feed_type, _) in enumerate(group):
+                    feed_group_positions[feed_type] = position
             task_ids = {}
 
-            # Render all categories up front (including pending subcategories)
-            # and fetch in two phases so subcategories still benefit from cache.
+            # Render all categories up front.
+            # Categories within one cache-family group run sequentially.
+            # Different cache families run in parallel.
             for feed_type, _ in feeds:
-                category = categories_by_key.get(feed_type, {})
-                is_main_priority = is_main_priority_search_category(category)
-                prefix = "" if is_main_priority else "  "
-                if feed_type in main_priority_feed_keys:
-                    description = f"{prefix}Fetching {feed_names.get(feed_type, feed_type)} feed..."
-                else:
-                    description = f"{prefix}[dim]Pending {feed_names.get(feed_type, feed_type)} feed...[/dim]"
+                prefix = "  " if feed_group_positions.get(feed_type, 0) > 0 else ""
+                description = f"{prefix}[dim]Pending {feed_names.get(feed_type, feed_type)} feed...[/dim]"
                 task_ids[feed_type] = progress.add_task(description, total=None)
 
-            for feed_batch in (main_priority_feeds, subcategory_feeds):
-                if not feed_batch:
-                    continue
+            progress_lock = threading.Lock()
 
-                for feed_type, _ in feed_batch:
-                    category = categories_by_key.get(feed_type, {})
-                    is_main_priority = is_main_priority_search_category(category)
-                    prefix = "" if is_main_priority else "  "
-                    progress.update(
-                        task_ids[feed_type],
-                        description=(
-                            f"{prefix}Fetching {feed_names.get(feed_type, feed_type)} feed..."
-                        ),
-                        completed=0,
-                        total=None,
-                    )
-
-                with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=max(1, min(3, len(feed_batch)))
-                ) as executor:
-                    future_to_feed = {
-                        executor.submit(client.get_feed, feed_type): (
-                            feed_type,
-                            download_category,
+            def fetch_family_group(feed_group):
+                family_items = []
+                for position, (feed_type, download_category) in enumerate(feed_group):
+                    prefix = "  " if position > 0 else ""
+                    with progress_lock:
+                        progress.update(
+                            task_ids[feed_type],
+                            description=(
+                                f"{prefix}Fetching {feed_names.get(feed_type, feed_type)} feed..."
+                            ),
+                            completed=0,
+                            total=None,
                         )
-                        for feed_type, download_category in feed_batch
-                    }
-
-                    for future in concurrent.futures.as_completed(future_to_feed):
-                        feed_type, download_category = future_to_feed[future]
-                        category = categories_by_key.get(feed_type, {})
-                        is_main_priority = is_main_priority_search_category(category)
-                        prefix = "" if is_main_priority else "  "
-                        try:
-                            feed_items = future.result()
+                    try:
+                        feed_items = client.get_feed(feed_type)
+                        with progress_lock:
                             progress.update(
                                 task_ids[feed_type],
                                 completed=1,
                                 total=1,
                                 description=f"{prefix}[green]Fetched {feed_names.get(feed_type, feed_type)} feed[/green]",
                             )
-                            if feed_items:
-                                for item in feed_items:
-                                    all_feed_items.append(
-                                        (feed_type, download_category, item)
-                                    )
-                        except Exception:
+                        if feed_items:
+                            for item in feed_items:
+                                family_items.append(
+                                    (feed_type, download_category, item)
+                                )
+                    except Exception:
+                        with progress_lock:
                             progress.update(
                                 task_ids[feed_type],
                                 completed=1,
                                 total=1,
                                 description=f"{prefix}[red]Failed {feed_names.get(feed_type, feed_type)} feed[/red]",
                             )
+                return family_items
+
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(1, min(3, len(feed_groups)))
+            ) as executor:
+                future_to_group = {
+                    executor.submit(fetch_family_group, feed_group): feed_group
+                    for feed_group in feed_groups
+                }
+
+                for future in concurrent.futures.as_completed(future_to_group):
+                    try:
+                        all_feed_items.extend(future.result())
+                    except Exception:
+                        pass
     except KeyboardInterrupt:
         console.print("[red]Cancelled fetching feeds.[/red]")
         return False

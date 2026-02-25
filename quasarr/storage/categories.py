@@ -8,6 +8,7 @@ import re
 from quasarr.constants import (
     DOWNLOAD_CATEGORIES,
     SEARCH_CAT_SHOWS_ANIME,
+    SEARCH_CAT_SHOWS_DOCUMENTARY,
     SEARCH_CATEGORIES,
 )
 
@@ -31,6 +32,20 @@ def _normalize_search_sources(sources):
         normalized.append(value)
 
     return normalized
+
+
+def get_search_category_ui_heading(name):
+    """
+    Return UI-only heading text for search categories without changing API names.
+
+    Standalone TV special categories are displayed without the "TV/" prefix
+    in the categories web UI heading.
+    """
+    if not isinstance(name, str):
+        return ""
+    if name.startswith("TV/"):
+        return name.split("/", 1)[1]
+    return name
 
 
 def get_download_categories():
@@ -217,6 +232,9 @@ def get_search_category_whitelist_owner(cat_id: int) -> int:
         return cat_id
 
     if cat_id == SEARCH_CAT_SHOWS_ANIME:
+        return cat_id
+
+    if cat_id == SEARCH_CAT_SHOWS_DOCUMENTARY:
         return cat_id
 
     if cat_id % 1000 == 0:

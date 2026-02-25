@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timezone
 from email.utils import parsedate_to_datetime
+from threading import Lock
 
 from quasarr.constants import (
     SEARCH_CAT_BOOKS,
@@ -14,7 +15,13 @@ from quasarr.constants import (
     SEARCH_CAT_SHOWS,
 )
 from quasarr.providers.imdb_metadata import get_imdb_metadata
-from quasarr.providers.log import debug, get_logger, info, trace, warn
+from quasarr.providers.log import (
+    debug,
+    get_source_logger,
+    info,
+    trace,
+    warn,
+)
 from quasarr.search.sources import get_sources
 from quasarr.search.sources.helpers.search_source import AbstractSearchSource
 from quasarr.storage.categories import get_search_category_sources
@@ -35,6 +42,7 @@ def get_search_results(
         determine_search_category,
         get_base_search_category_id,
         get_search_behavior_category,
+        get_search_cache_owner_category,
         get_search_capability_category,
         release_matches_search_category,
     )
@@ -64,8 +72,13 @@ def get_search_results(
         is_custom_search_category = int(search_category) >= 100000
     except (TypeError, ValueError):
         pass
+    # Cache keys are shared at the cache-family owner level.
+    # Multi-category callers should execute same-family categories in ascending order
+    # so the lowest category populates cache before stricter siblings run.
     cache_key_category = (
-        search_category if is_custom_search_category else capability_category
+        search_category
+        if is_custom_search_category
+        else get_search_cache_owner_category(behavior_search_category)
     )
 
     # Filter out sources that are not in the search category's whitelist
@@ -87,31 +100,53 @@ def get_search_results(
 
     # Use base_search_category for logic branching
     if imdb_id:
-        stype = f"IMDb-ID <b>{imdb_id}</b>"
+        stype = f"IMDb-ID <y>{imdb_id}</y>"
+
+        if season:
+            stype += f" <g>S{season}</g>"
+        if episode:
+            stype += f"{'' if season else ' '}<e>E{episode}</e>"
+
         if base_search_category in [SEARCH_CAT_MOVIES, SEARCH_CAT_SHOWS]:
             args = (shared_state, start_time, behavior_search_category)
             kwargs = {"search_string": imdb_id, "season": season, "episode": episode}
             for source in sources.values():
-                url = config.get(source.initials)
-                if (
-                    url
-                    and source.supports_imdb
-                    and capability_category in source.supported_categories
-                    and (
-                        not whitelisted_sources
-                        or source.initials in whitelisted_sources
+                source_logger = get_source_logger(source.initials)
+
+                if not config.get(source.initials):
+                    source_logger.trace("Hostname missing in config")
+                    continue
+
+                if capability_category not in source.supported_categories:
+                    source_logger.trace(
+                        f"Category <g>{capability_category}</g> not supported"
                     )
-                ):
-                    search_executor.add(
-                        source,
-                        args,
-                        kwargs,
-                        use_cache=True,
-                        cache_category=cache_key_category,
+                    continue
+
+                if whitelisted_sources and source.initials not in whitelisted_sources:
+                    source_logger.trace(
+                        f"Category <g>{search_category}</g> not whitelisted"
                     )
+                    continue
+
+                if not source.supports_imdb:
+                    source_logger.warn("IMDb ID unsupported")
+                    continue
+
+                if episode and not season and not source.supports_absolute_numbering:
+                    source_logger.trace("Search with absolute EP number unsupported")
+                    continue
+
+                search_executor.add(
+                    source,
+                    args,
+                    kwargs,
+                    use_cache=True,
+                    cache_category=cache_key_category,
+                )
         else:
             warn(
-                f"{stype} is not supported for {request_from}, category: {search_category} (Base: {base_search_category})"
+                f"{stype} is not supported for <d>{request_from}</d>, category: {search_category} (Base: {base_search_category})"
             )
 
     elif search_phrase:
@@ -120,26 +155,38 @@ def get_search_results(
             args = (shared_state, start_time, behavior_search_category)
             kwargs = {"search_string": search_phrase}
             for source in sources.values():
-                url = config.get(source.initials)
-                if (
-                    url
-                    and source.supports_phrase
-                    and capability_category in source.supported_categories
-                    and (
-                        not whitelisted_sources
-                        or source.initials in whitelisted_sources
+                source_logger = get_source_logger(source.initials)
+
+                if not config.get(source.initials):
+                    source_logger.trace("Hostname missing in config")
+                    continue
+
+                if capability_category not in source.supported_categories:
+                    source_logger.trace(
+                        f"Category <g>{capability_category}</g> not supported"
                     )
-                ):
-                    search_executor.add(
-                        source,
-                        args,
-                        kwargs,
-                        use_cache=True,
-                        cache_category=cache_key_category,
+                    continue
+
+                if whitelisted_sources and source.initials not in whitelisted_sources:
+                    source_logger.trace(
+                        f"Category <g>{search_category}</g> not whitelisted"
                     )
+                    continue
+
+                if not source.supports_phrase:
+                    source_logger.warn("Search phrase unsupported")
+                    continue
+
+                search_executor.add(
+                    source,
+                    args,
+                    kwargs,
+                    use_cache=True,
+                    cache_category=cache_key_category,
+                )
         else:
             warn(
-                f"{stype} is not supported for {request_from}, category: {search_category} (Base: {base_search_category})"
+                f"{stype} is not supported for <d>{request_from}</d>, category: {search_category} (Base: {base_search_category})"
             )
 
     else:
@@ -148,23 +195,35 @@ def get_search_results(
         kwargs = {}
         use_pagination = False
         for source in sources.values():
-            url = config.get(source.initials)
-            if (
-                url
-                and capability_category in source.supported_categories
-                and (not whitelisted_sources or source.initials in whitelisted_sources)
-            ):
-                search_executor.add(
-                    source,
-                    args,
-                    kwargs,
-                    use_cache=True,
-                    ttl=60,
-                    action="feed",
-                    cache_category=cache_key_category,
-                )
+            source_logger = get_source_logger(source.initials)
 
-    debug(f"Starting <g>{len(search_executor.searches)}</g> searches for {stype}...")
+            if not config.get(source.initials):
+                source_logger.trace("Hostname missing in config")
+                continue
+
+            if capability_category not in source.supported_categories:
+                source_logger.trace(
+                    f"Category <g>{capability_category}</g> not supported"
+                )
+                continue
+
+            if whitelisted_sources and source.initials not in whitelisted_sources:
+                source_logger.trace(
+                    f"Category <g>{search_category}</g> not whitelisted"
+                )
+                continue
+
+            search_executor.add(
+                source,
+                args,
+                kwargs,
+                use_cache=True,
+                ttl=60,
+                action="feed",
+                cache_category=cache_key_category,
+            )
+
+    debug(f"Starting <g>{len(search_executor.searches)}</g> searches for {stype}")
 
     # Unpack the new return values (all_cached, min_ttl)
     results, status_bar, all_cached, min_ttl = search_executor.run_all()
@@ -283,7 +342,7 @@ class SearchExecutor:
                     cached_result, exp = search_cache.get(key)
 
                 if cached_result is not None:
-                    get_logger(f"{__name__}.{source_name}").debug(
+                    get_source_logger(source_name).debug(
                         f"Using cached result with cache_key '{key}'"
                     )
                     results.extend(cached_result)
@@ -310,7 +369,7 @@ class SearchExecutor:
                         if res and len(res) > 0:
                             badge = f"<bg green><black>{source_name.upper()}</black></bg green>"
                         else:
-                            get_logger(f"{__name__}.{source_name}").debug(
+                            get_source_logger(source_name).debug(
                                 "❌ No results returned"
                             )
                             badge = f"<bg black><white>{source_name.upper()}</white></bg black>"
@@ -324,9 +383,7 @@ class SearchExecutor:
                         results_badges[index] = (
                             f"<bg red><white>{source_name.upper()}</white></bg red>"
                         )
-                        get_logger(f"{__name__}.{source_name}").warn(
-                            f"Search error: {e}"
-                        )
+                        get_source_logger(source_name).warn(f"Search error: {e}")
 
                 bar_str = f" [{' '.join(results_badges)}]"
 
@@ -337,8 +394,13 @@ class SearchCache:
     def __init__(self):
         self.last_cleaned = time.time()
         self.cache = {}
+        self._lock = Lock()
 
     def clean(self, now):
+        with self._lock:
+            self._clean_locked(now)
+
+    def _clean_locked(self, now):
         if now - self.last_cleaned < 60:
             return
         keys_to_delete = [k for k, (_, exp) in self.cache.items() if now >= exp]
@@ -347,14 +409,22 @@ class SearchCache:
         self.last_cleaned = now
 
     def get(self, key):
-        val, exp = self.cache.get(key, (None, 0))
-        # Return tuple (value, expiry) if valid, else (None, 0)
-        return (val, exp) if time.time() < exp else (None, 0)
+        now = time.time()
+        with self._lock:
+            val, exp = self.cache.get(key, (None, 0))
+            if now < exp:
+                return (val, exp)
+
+            # Clean up stale key opportunistically.
+            if key in self.cache:
+                del self.cache[key]
+            return (None, 0)
 
     def set(self, key, value, ttl=300):
         now = time.time()
-        self.cache[key] = (value, now + ttl)
-        self.clean(now)
+        with self._lock:
+            self.cache[key] = (value, now + ttl)
+            self._clean_locked(now)
 
 
 search_cache = SearchCache()
