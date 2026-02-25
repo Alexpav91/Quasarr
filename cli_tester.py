@@ -732,6 +732,36 @@ class QuasarrClient:
         self.api_key = api_key
         self.session = requests.Session()
         self._search_caps = None
+        self._search_input_state = {}
+
+    def get_search_input_state(self, category_key):
+        """
+        Returns remembered search input defaults for a category key.
+        """
+        state = self._search_input_state.get(category_key) or {}
+        return {
+            "query": state.get("query"),
+            "season": state.get("season"),
+            "episode": state.get("episode"),
+        }
+
+    def remember_search_input_state(
+        self, category_key, query=None, season=None, episode=None
+    ):
+        """
+        Remembers user-entered search defaults for a category key.
+        """
+        if not category_key:
+            return
+
+        state = self._search_input_state.get(category_key, {})
+        if query is not None:
+            state["query"] = str(query)
+        if season is not None:
+            state["season"] = str(season)
+        if episode is not None:
+            state["episode"] = str(episode)
+        self._search_input_state[category_key] = state
 
     def _get(self, params, user_agent):
         request_params = params.copy()
@@ -1456,32 +1486,39 @@ def handle_searches_menu(client):
         if not selected_category:
             continue
 
+        remembered_inputs = client.get_search_input_state(choice)
         validator = (
             validate_imdb if selected_category["query_validator"] == "imdb" else None
         )
         q = TextInput(
             selected_category["query_prompt"],
-            default=selected_category["default_query"],
+            default=remembered_inputs.get("query")
+            or selected_category["default_query"],
             validator=validator,
         ).run()
         if not q:
             continue
+        client.remember_search_input_state(choice, query=q)
 
         clear_screen()
         start = time.time()
 
         if selected_category["supports_season_episode"]:
             s = TextInput(
-                f"{selected_category['category_name']}: {q}\nSeason", default="1"
+                f"{selected_category['category_name']}: {q}\nSeason",
+                default=remembered_inputs.get("season") or "1",
             ).run()
             if s is None:
                 continue
+            client.remember_search_input_state(choice, season=s)
             clear_screen()
             e = TextInput(
-                f"{selected_category['category_name']}: {q} S{s}\nEpisode", default="1"
+                f"{selected_category['category_name']}: {q} S{s}\nEpisode",
+                default=remembered_inputs.get("episode") or "1",
             ).run()
             if e is None:
                 continue
+            client.remember_search_input_state(choice, episode=e)
             clear_screen()
             res = LoadingScreen(
                 f"Searching {selected_category['category_name']}: {q}",

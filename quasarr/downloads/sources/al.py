@@ -16,7 +16,7 @@ from quasarr.constants import LANGUAGE_TO_ALPHA2, SUBTITLE_TOKEN_BY_ALPHA2
 from quasarr.downloads.linkcrypters.al import decrypt_content, solve_captcha
 from quasarr.downloads.sources.helpers.abstract_source import AbstractDownloadSource
 from quasarr.providers.hostname_issues import mark_hostname_issue
-from quasarr.providers.log import debug, info
+from quasarr.providers.log import debug, info, trace
 from quasarr.providers.sessions.al import (
     fetch_via_flaresolverr,
     fetch_via_requests_session,
@@ -638,15 +638,28 @@ def _parse_info_from_download_item(
     notes_td = tab.select_one("tr:has(th>i.fa-info) td")
     notes_text = notes_td.get_text(strip=True) if notes_td else ""
     notes_lower = notes_text.lower()
+    trace(
+        f"parse_download_item tab={tab.get('id', '')} "
+        f"page_title='{page_title}' requested_season={requested_season} "
+        f"requested_episode={requested_episode} notes_text='{notes_text}'"
+    )
 
     release_title = None
     if notes_text:
         rn_with_dots = notes_text.replace(" ", ".").replace(".-.", "-")
         rn_no_dot_duplicates = re.sub(r"\.{2,}", ".", rn_with_dots)
+        trace(
+            f"notes_transformed tab={tab.get('id', '')} "
+            f"dotted='{rn_with_dots}' deduped='{rn_no_dot_duplicates}'"
+        )
         if "." in rn_with_dots and "-" in rn_with_dots:
             # Check if string ends with Group tag (word after dash) - this should prevent false positives
             if re.search(r"-[\s.]?\w+$", rn_with_dots):
                 release_title = rn_no_dot_duplicates
+                trace(
+                    f"release_title accepted from notes "
+                    f"tab={tab.get('id', '')}: '{release_title}'"
+                )
 
     # resolution
     res_td = tab.select_one("tr:has(th>i.fa-desktop) td")
@@ -783,6 +796,12 @@ def _parse_info_from_download_item(
     if release_title:
         release_title = _inject_subtitle_tokens_in_title(release_title, subtitle_langs)
 
+    trace(
+        f"parse_download_item result tab={tab.get('id', '')} "
+        f"release_title='{release_title}' season={season_num} "
+        f"episode_min={episode_min} episode_max={episode_max}"
+    )
+
     return ReleaseInfo(
         release_title=release_title,
         audio_langs=audio_langs,
@@ -805,6 +824,8 @@ def _guess_title(page_title, release_info: ReleaseInfo) -> str:
     # Remove season/staffel info
     pattern = r"(?i)\b(?:Season|Staffel)\s*\.?\s*\d+\b|\bR\d+\b"
     clean_title = re.sub(pattern, "", clean_title)
+    # If season tokens were removed from "Title - Staffel X", drop leftover trailing separators.
+    clean_title = re.sub(r"\s*[-:]\s*$", "", clean_title).strip()
 
     # determine season token
     if release_info.season is not None:

@@ -318,6 +318,10 @@ class Source(AbstractSearchSource):
             try:
                 url = result["url"]
                 title = result.get("title") or ""
+                trace(
+                    f"query='{search_string}' season={season} "
+                    f"episode={episode} result_title='{title}' url='{url}'"
+                )
 
                 context = "recents_al"
                 threshold = 60
@@ -356,6 +360,13 @@ class Source(AbstractSearchSource):
                         release_type=valid_type,
                         requested_season=True if season else False,
                         requested_episode=episode,
+                    )
+                    trace(
+                        f"tab={tab.get('id')} release_id={release_id} "
+                        f"parsed_release_title='{release_info.release_title}' "
+                        f"parsed_season={release_info.season} "
+                        f"parsed_episode_min={release_info.episode_min} "
+                        f"parsed_episode_max={release_info.episode_max}"
                     )
 
                     # Parse date
@@ -403,8 +414,14 @@ class Source(AbstractSearchSource):
                     # If no valid title was grabbed from Release Notes, guess the title
                     if release_info.release_title:
                         release_title = release_info.release_title
+                        title_source = "release_notes"
                     else:
                         release_title = _guess_title(title, release_info)
+                        title_source = "guessed"
+                    trace(
+                        f"chosen_title_source={title_source} "
+                        f"final_release_title='{release_title}'"
+                    )
 
                     if season and release_info.season != int(season):
                         trace(
