@@ -124,6 +124,12 @@ HOSTERS = [
     ),  # Active. Smaller ecosystem, often specific to certain boards.
     ("Fikper", False),  # Newer player (relative to RG), gained traction in 2024-25.
     ("Mega", False),  # Active, but functions differently (cloud drive vs. OCH).
+    ("AkiraBox", False),  # Common mirror on anime-focused releases.
+    ("BuzzHeavier", False),  # Common mirror on anime-focused releases.
+    ("GoFile", False),  # Common mirror on anime-focused releases.
+    ("KrakenFiles", False),  # Common mirror on anime-focused releases.
+    ("MdiaLoad", False),  # Common mirror on anime-focused releases.
+    ("MultiUp", False),  # Common mirror on anime-focused releases.
     ("frdl", False),  # Rarely used in some forums
 ]
 
@@ -271,12 +277,16 @@ LANGUAGE_TO_ALPHA2 = {
     "german": "DE",
     "deutsch": "DE",
     "de": "DE",
+    "ger": "DE",
+    "deu": "DE",
     "english": "EN",
     "englisch": "EN",
     "en": "EN",
+    "eng": "EN",
     "japanese": "JP",
     "japanisch": "JP",
     "jp": "JP",
+    "jpn": "JP",
 }
 
 SUBTITLE_TOKEN_BY_ALPHA2 = {
