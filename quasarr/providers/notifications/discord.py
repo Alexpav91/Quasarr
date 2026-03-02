@@ -6,7 +6,11 @@ import json
 
 import requests
 
-from quasarr.constants import QUASARR_AVATAR, SUPPRESS_NOTIFICATIONS
+from quasarr.constants import (
+    QUASARR_AVATAR,
+    SESSION_REQUEST_TIMEOUT_SECONDS,
+    SUPPRESS_NOTIFICATIONS,
+)
 from quasarr.providers.log import info
 from quasarr.providers.notifications.helpers.abstract_notification_formatter import (
     AbstractNotificationFormatter,
@@ -95,6 +99,7 @@ def send(shared_state, message, silent=True):
         webhook_url,
         data=json.dumps(data),
         headers={"Content-Type": "application/json"},
+        timeout=SESSION_REQUEST_TIMEOUT_SECONDS,
     )
     if response.status_code != 204:
         info(

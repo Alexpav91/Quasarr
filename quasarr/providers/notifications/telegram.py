@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from quasarr.constants import SESSION_REQUEST_TIMEOUT_SECONDS
 from quasarr.providers.log import info
 from quasarr.providers.notifications.helpers.abstract_notification_formatter import (
     AbstractNotificationFormatter,
@@ -55,7 +56,7 @@ def _build_photo_upload(shared_state, image_url):
     response = requests.get(
         image_url,
         headers=_get_photo_request_headers(shared_state, image_url),
-        timeout=30,
+        timeout=SESSION_REQUEST_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
 
@@ -83,7 +84,11 @@ def _parse_json_response(response):
 
 
 def _telegram_get(api_base_url, method, params):
-    response = requests.get(f"{api_base_url}/{method}", params=params, timeout=30)
+    response = requests.get(
+        f"{api_base_url}/{method}",
+        params=params,
+        timeout=SESSION_REQUEST_TIMEOUT_SECONDS,
+    )
     return response, _parse_json_response(response)
 
 
@@ -92,7 +97,7 @@ def _telegram_post(api_base_url, method, payload, files=None):
         f"{api_base_url}/{method}",
         data=payload,
         files=files,
-        timeout=30,
+        timeout=SESSION_REQUEST_TIMEOUT_SECONDS,
     )
     return response, _parse_json_response(response)
 
