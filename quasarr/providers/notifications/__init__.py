@@ -33,13 +33,13 @@ def _provider_case_enabled(shared_state, provider, notification_type):
 def _provider_case_silent(shared_state, provider, notification_type):
     silent_settings = _get_notification_settings(shared_state).get("silent")
     if not isinstance(silent_settings, dict):
-        return True
+        return False
 
     provider_silent = silent_settings.get(provider)
     if not isinstance(provider_silent, dict):
-        return True
+        return False
 
-    return bool(provider_silent.get(notification_type.value, True))
+    return bool(provider_silent.get(notification_type.value, False))
 
 
 def send_notification(

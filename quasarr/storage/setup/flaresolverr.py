@@ -126,7 +126,7 @@ def flaresolverr_form_html(shared_state, is_setup=False):
             if (skipBtn) { skipBtn.disabled = true; skipBtn.textContent = 'Skipping...'; }
             if (submitBtn) { submitBtn.disabled = true; }
 
-            fetch('/api/flaresolverr/skip', { method: 'POST' })
+            quasarrApiFetch('/api/flaresolverr/skip', { method: 'POST' })
             .then(response => {
                 if (response.ok) {
                     window.location.href = '/skip-success';

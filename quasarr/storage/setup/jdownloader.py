@@ -144,7 +144,7 @@ def jdownloader_config(shared_state):
 
             var user = document.getElementById('user').value;
             var pass = document.getElementById('pass').value;
-            fetch('/api/verify_jdownloader', {
+            quasarrApiFetch('/api/verify_jdownloader', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

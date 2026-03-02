@@ -291,7 +291,7 @@ def hostname_form_html(shared_state, message, show_skip_management=False):
     importBtn.disabled = true;
     importBtn.textContent = 'Importing...';
 
-    fetch('/api/hostnames/import-url', {{
+    quasarrApiFetch('/api/hostnames/import-url', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
       body: JSON.stringify({{ url: url }})
@@ -338,7 +338,7 @@ def hostname_form_html(shared_state, message, show_skip_management=False):
 
   function performRestart() {{
     closeModal();
-    fetch('/api/restart', {{ method: 'POST' }})
+    quasarrApiFetch('/api/restart', {{ method: 'POST' }})
     .then(response => response.json())
     .then(data => {{
       if (data.success) {{
@@ -516,7 +516,7 @@ def hostname_form_html(shared_state, message, show_skip_management=False):
         statusDiv.innerHTML = 'Checking...';
         statusDiv.style.color = 'var(--secondary, #6c757d)';
 
-        fetch('/api/hostnames/check-credentials/' + id, {{
+        quasarrApiFetch('/api/hostnames/check-credentials/' + id, {{
             method: 'POST',
             headers: {{ 'Content-Type': 'application/json' }},
             body: JSON.stringify({{ user: user, password: pass }})
@@ -919,7 +919,7 @@ def hostname_credentials_config(shared_state, shorthand, domain):
             if (skipBtn) {{ skipBtn.disabled = true; skipBtn.textContent = 'Skipping...'; }}
             if (submitBtn) {{ submitBtn.disabled = true; }}
 
-            fetch('/api/credentials/{shorthand}/skip', {{ method: 'POST' }})
+            quasarrApiFetch('/api/credentials/{shorthand}/skip', {{ method: 'POST' }})
             .then(response => {{
                 if (response.ok) {{
                     window.location.href = '/skip-success';

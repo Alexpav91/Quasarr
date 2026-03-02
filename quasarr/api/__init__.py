@@ -15,7 +15,12 @@ from quasarr.api.packages import setup_packages_routes
 from quasarr.api.sponsors_helper import setup_sponsors_helper_routes
 from quasarr.api.statistics import setup_statistics
 from quasarr.providers import shared_state
-from quasarr.providers.auth import add_auth_hook, add_auth_routes, show_logout_link
+from quasarr.providers.auth import (
+    add_auth_hook,
+    add_auth_routes,
+    audit_route_auth_modes,
+    show_logout_link,
+)
 from quasarr.providers.hostname_issues import get_all_hostname_issues
 from quasarr.providers.html_templates import (
     render_button,
@@ -37,12 +42,9 @@ def get_api(shared_state_dict, shared_state_lock):
 
     app = Bottle()
 
-    # Auth: routes must come first, then hook
+    # Install auth policy before the route modules are registered.
     add_auth_routes(app)
-    add_auth_hook(
-        app,
-        whitelist=["/api", "/api/", "/sponsors_helper/", "/download/", ".user.js"],
-    )
+    add_auth_hook(app, whitelist=[".user.js"])
 
     setup_arr_routes(app)
     setup_captcha_routes(app)
@@ -50,6 +52,11 @@ def get_api(shared_state_dict, shared_state_lock):
     setup_statistics(app, shared_state)
     setup_sponsors_helper_routes(app)
     setup_packages_routes(app)
+    audit_route_auth_modes(
+        app,
+        api_key_prefixes=("/api", "/download/", "/sponsors_helper/api/"),
+        public_whitelist=(".user.js",),
+    )
 
     @app.get("/")
     def index():
@@ -826,7 +833,7 @@ def get_api(shared_state_dict, shared_state_lock):
                 statusDiv.innerHTML = 'Verifying...';
                 statusDiv.style.color = 'var(--text-muted, #666)';
                 
-                fetch('/api/jdownloader/verify', {{
+                quasarrApiFetch('/api/jdownloader/verify', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{ user: user, pass: pass }})
@@ -871,7 +878,7 @@ def get_api(shared_state_dict, shared_state_lock):
                 statusDiv.innerHTML = 'Saving...';
                 statusDiv.style.color = 'var(--text-muted, #666)';
                 
-                fetch('/api/jdownloader/save', {{
+                quasarrApiFetch('/api/jdownloader/save', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{ user: user, pass: pass, device: device }})
@@ -947,7 +954,7 @@ def get_api(shared_state_dict, shared_state_lock):
                 }}
 
                 try {{
-                    var response = await fetch('/api/notifications/settings', {{
+                    var response = await quasarrApiFetch('/api/notifications/settings', {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify(collectNotificationPayload())
@@ -996,7 +1003,7 @@ def get_api(shared_state_dict, shared_state_lock):
                 setNotificationStatus(statusId, 'Sending test message...', true);
 
                 try {{
-                    var response = await fetch('/api/notifications/test', {{
+                    var response = await quasarrApiFetch('/api/notifications/test', {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{ provider: provider }})

@@ -15,6 +15,7 @@ from quasarr.api.jdownloader import get_jdownloader_disconnected_page
 from quasarr.downloads.linkcrypters.filecrypt import DLC, get_filecrypt_links
 from quasarr.downloads.packages import delete_package
 from quasarr.providers import obfuscated, shared_state
+from quasarr.providers.auth import public_endpoint
 from quasarr.providers.html_templates import render_button, render_centered_html
 from quasarr.providers.log import debug, error, info, trace
 from quasarr.providers.statistics import StatsHelper
@@ -531,18 +532,21 @@ def setup_captcha_routes(app):
         </html>""")
 
     @app.get("/captcha/filecrypt.user.js")
+    @public_endpoint
     def serve_filecrypt_user_js():
         content = obfuscated.filecrypt_user_js()
         response.content_type = "application/javascript"
         return content
 
     @app.get("/captcha/hide.user.js")
+    @public_endpoint
     def serve_hide_user_js():
         content = obfuscated.hide_user_js()
         response.content_type = "application/javascript"
         return content
 
     @app.get("/captcha/junkies.user.js")
+    @public_endpoint
     def serve_junkies_user_js():
         sj = shared_state.values["config"]("Hostnames").get("sj")
         dj = shared_state.values["config"]("Hostnames").get("dj")
@@ -552,12 +556,14 @@ def setup_captcha_routes(app):
         return content
 
     @app.get("/captcha/keeplinks.user.js")
+    @public_endpoint
     def serve_keeplinks_user_js():
         content = obfuscated.keeplinks_user_js()
         response.content_type = "application/javascript"
         return content
 
     @app.get("/captcha/tolink.user.js")
+    @public_endpoint
     def serve_tolink_user_js():
         content = obfuscated.tolink_user_js()
         response.content_type = "application/javascript"

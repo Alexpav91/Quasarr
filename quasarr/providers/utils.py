@@ -13,7 +13,7 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from io import BytesIO
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import requests
 from PIL import Image
@@ -42,6 +42,7 @@ from quasarr.constants import (
 from quasarr.providers.log import crit, debug, error, trace, warn
 from quasarr.search.sources.helpers import get_login_required_hostnames
 from quasarr.storage.categories import download_category_exists, search_category_exists
+from quasarr.storage.config import Config
 from quasarr.storage.sqlite_database import DataBase
 
 
@@ -259,9 +260,13 @@ def generate_download_link(
     raw_payload = f"{title}|{url}|{size_mb}|{password}|{imdb_id}|{source_key}"
     encoded_payload = urlsafe_b64encode(raw_payload.encode("utf-8")).decode("utf-8")
 
-    return (
-        f"{shared_state.values['internal_address']}/download/?payload={encoded_payload}"
+    query = urlencode(
+        {
+            "payload": encoded_payload,
+            "apikey": Config("API").get("key") or "",
+        }
     )
+    return f"{shared_state.values['internal_address']}/download/?{query}"
 
 
 # =============================================================================

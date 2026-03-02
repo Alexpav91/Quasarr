@@ -62,6 +62,7 @@ def _dedupe_releases(releases):
 
 def setup_arr_routes(app):
     @app.get("/download/")
+    @require_api_key
     def fake_nzb_file():
         payload = request.query.payload
         decoded_payload = parse_payload(payload)
