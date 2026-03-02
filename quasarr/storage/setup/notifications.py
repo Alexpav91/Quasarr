@@ -6,7 +6,7 @@ import re
 
 from bottle import request, response
 
-from quasarr.constants import QUASARR_AVATAR
+from quasarr.constants import NOTIFICATION_PROVIDERS, QUASARR_AVATAR
 from quasarr.providers.log import info
 from quasarr.providers.notifications.helpers.message_builder import (
     build_notification_message,
@@ -18,7 +18,6 @@ from quasarr.providers.notifications.helpers.notification_types import (
 from quasarr.storage.config import Config
 from quasarr.storage.sqlite_database import DataBase
 
-NOTIFICATION_PROVIDERS = ("discord", "telegram")
 NOTIFICATION_TYPES = get_user_configurable_notification_types()
 NOTIFICATION_SETTINGS_TABLE = "notification_settings"
 

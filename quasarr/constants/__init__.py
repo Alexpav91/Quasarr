@@ -17,6 +17,9 @@ FEED_REQUEST_TIMEOUT_SECONDS = 30
 DOWNLOAD_REQUEST_TIMEOUT_SECONDS = 30
 SESSION_REQUEST_TIMEOUT_SECONDS = 30
 
+# Notification providers exposed in config/UI.
+NOTIFICATION_PROVIDERS = ("discord", "telegram")
+
 
 # ==============================================================================
 # SEARCH AND DOWNLOAD CATEGORIES
