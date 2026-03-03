@@ -60,6 +60,17 @@ def _build_solved_entries(details):
     return tuple(entries)
 
 
+def _build_reason_entry(details):
+    if not isinstance(details, dict):
+        return None
+
+    reason = details.get("reason") or details.get("error")
+    if not reason:
+        return None
+
+    return NotificationValueEntry(title="Reason", value=str(reason))
+
+
 def build_notification_message(
     shared_state,
     title,
@@ -82,10 +93,7 @@ def build_notification_message(
         description = "CAPTCHA solved by SponsorsHelper!"
         entries.extend(_build_solved_entries(details))
     elif notification_type == NotificationType.FAILED:
-        description = (
-            "SponsorsHelper failed to solve the CAPTCHA! "
-            "Package marked as failed for deletion."
-        )
+        description = "Package marked as failed."
     elif notification_type == NotificationType.DISABLED:
         description = (
             "SponsorsHelper failed to solve the CAPTCHA! "
@@ -132,6 +140,9 @@ def build_notification_message(
     else:
         info(f"Unknown notification case: {case}")
         return None
+
+    if reason_entry := _build_reason_entry(details):
+        entries.append(reason_entry)
 
     if source and source.startswith("http"):
         entries.append(
