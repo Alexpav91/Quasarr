@@ -2,7 +2,7 @@
 # Quasarr
 # Project by https://github.com/rix1337
 
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from quasarr.constants import DOWNLOAD_REQUEST_TIMEOUT_SECONDS
 from quasarr.downloads.sources.helpers.abstract_source import AbstractDownloadSource
 from quasarr.providers.hostname_issues import mark_hostname_issue
-from quasarr.providers.log import info
+from quasarr.providers.log import debug, info
 
 
 class Source(AbstractDownloadSource):
@@ -63,23 +63,14 @@ class Source(AbstractDownloadSource):
             if not href.lower().startswith(("http://", "https://")):
                 href = "https://" + host + href
 
-            try:
-                r = requests.head(
-                    href,
-                    headers=headers,
-                    allow_redirects=True,
-                    timeout=DOWNLOAD_REQUEST_TIMEOUT_SECONDS,
-                )
-                r.raise_for_status()
-                href = r.url
-            except Exception as e:
-                info(f"Could not resolve download link for {title}: {e}")
-                mark_hostname_issue(
-                    Source.initials,
-                    "download",
-                    str(e) if "e" in dir() else "Download error",
-                )
-                continue
+            if _is_nk_redirect_link(href, host):
+                resolved_href = _resolve_nk_redirect(session, href, headers, title)
+                if resolved_href:
+                    href = resolved_href
+                else:
+                    # Never yield unresolved NK "/go" links. They bypass protected-link
+                    # classification and end up as broken direct links in JD.
+                    continue
 
             candidates.append([href, mirror])
 
@@ -90,6 +81,86 @@ class Source(AbstractDownloadSource):
 
 
 _SUPPORTED_MIRRORS = {"rapidgator", "ddownload"}
+
+
+def _normalize_host(host):
+    normalized = (host or "").lower().strip()
+    if normalized.startswith("www."):
+        normalized = normalized[4:]
+    return normalized
+
+
+def _is_nk_redirect_link(url, host):
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+
+    if _normalize_host(parsed.netloc) != _normalize_host(host):
+        return False
+
+    return parsed.path.startswith("/go/")
+
+
+def _is_filecrypt_link(url):
+    return "filecrypt." in (url or "").lower()
+
+
+def _resolve_nk_redirect(session, url, headers, title):
+    current_url = url
+    visited = set()
+
+    # Resolve redirect chain manually. This avoids fetching FileCrypt itself,
+    # which can return 403 for automated traffic even when URL is valid.
+    for _hop in range(8):
+        if current_url in visited:
+            debug(f"Could not resolve NK redirect for {title}: redirect loop detected")
+            return None
+        visited.add(current_url)
+
+        try:
+            response = session.get(
+                current_url,
+                headers=headers,
+                allow_redirects=False,
+                timeout=DOWNLOAD_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as e:
+            debug(f"Could not resolve NK redirect for {title}: {e}")
+            return None
+        except Exception as e:
+            debug(f"Could not resolve NK redirect for {title}: {e}")
+            return None
+
+        location = (response.headers.get("Location") or "").strip()
+        if location:
+            next_url = urljoin(current_url, location)
+            if _is_filecrypt_link(next_url):
+                return next_url
+            current_url = next_url
+            continue
+
+        final_url = (response.url or current_url).strip()
+        if _is_filecrypt_link(final_url):
+            return final_url
+
+        if "/404.html" in final_url:
+            debug(f"NK redirect resolved to 404 for {title}: {final_url}")
+            return None
+
+        if response.status_code >= 400:
+            debug(
+                f"Could not resolve NK redirect for {title}: HTTP {response.status_code} at {final_url}"
+            )
+            return None
+
+        debug(
+            f"Could not resolve NK redirect for {title}: no redirect target from {final_url}"
+        )
+        return None
+
+    debug(f"Could not resolve NK redirect for {title}: exceeded redirect hop limit")
+    return None
 
 
 def _normalize_mirror_name(mirror_name):

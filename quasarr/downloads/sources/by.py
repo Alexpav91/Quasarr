@@ -5,7 +5,7 @@
 import concurrent.futures
 import re
 import time
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -48,7 +48,7 @@ class Source(AbstractDownloadSource):
             frame_urls = [src for src in frames if f"https://{by}" in src]
             if not frame_urls:
                 debug(f"No iframe hosts found on {url} for {title}.")
-                return []
+                return {"links": []}
 
             async_results = []
 
@@ -104,43 +104,93 @@ class Source(AbstractDownloadSource):
 
                 url_hosters.append((href, link_hostname))
 
+            def _is_protected_or_auto_link(candidate_url):
+                lowered = (candidate_url or "").lower()
+                return (
+                    "filecrypt." in lowered
+                    or "hide." in lowered
+                    or "tolink." in lowered
+                    or "keeplinks." in lowered
+                )
+
             def resolve_redirect(href_hostname):
                 href, _hostname = href_hostname
-                try:
-                    rq = requests.get(
-                        href,
-                        headers=headers,
-                        timeout=DOWNLOAD_REQUEST_TIMEOUT_SECONDS,
-                        allow_redirects=True,
-                    )
-                    rq.raise_for_status()
-                    if "/404.html" in rq.url:
-                        info(f"Link leads to 404 page: {r.url}")
+                current_url = href
+                visited = set()
+
+                # If iframe already gives protected/auto URL, return directly.
+                if _is_protected_or_auto_link(current_url):
+                    return current_url
+
+                for _hop in range(8):
+                    if current_url in visited:
+                        debug(f"BY redirect loop detected for {current_url}")
                         return None
+                    visited.add(current_url)
+
+                    if _is_protected_or_auto_link(current_url):
+                        return current_url
+
+                    try:
+                        # Resolve redirect chain manually so we can capture final
+                        # FileCrypt URL without requesting FileCrypt itself.
+                        rq = requests.get(
+                            current_url,
+                            headers=headers,
+                            timeout=DOWNLOAD_REQUEST_TIMEOUT_SECONDS,
+                            allow_redirects=False,
+                        )
+                    except Exception as e:
+                        debug(f"Error resolving BY redirect for {current_url}: {e}")
+                        return None
+
+                    location = (rq.headers.get("Location") or "").strip()
+                    if location:
+                        next_url = urljoin(current_url, location)
+                        if "/404.html" in next_url:
+                            debug(f"BY redirect led to 404 page: {next_url}")
+                            return None
+                        current_url = next_url
+                        continue
+
+                    final_url = (rq.url or current_url).strip()
+                    if _is_protected_or_auto_link(final_url):
+                        return final_url
+
+                    if "/404.html" in final_url:
+                        debug(f"BY redirect led to 404 page: {final_url}")
+                        return None
+
+                    if rq.status_code >= 400:
+                        debug(
+                            f"Error resolving BY redirect: HTTP {rq.status_code} at {final_url}"
+                        )
+                        return None
+
                     time.sleep(1)
-                    return rq.url
-                except Exception as e:
-                    info(f"Error resolving link: {e}")
-                    mark_hostname_issue(
-                        Source.initials,
-                        "download",
-                        str(e) if "e" in dir() else "Download error",
-                    )
-                    return None
+                    return final_url
+
+                debug(f"BY redirect hop limit exceeded for {href}")
+                return None
 
             for pair in url_hosters:
                 resolved_url = resolve_redirect(pair)
                 link_hostname = pair[1]
 
-                if not link_hostname:
+                if not resolved_url:
+                    continue
+
+                # Protected/auto links must be returned as-is so downstream
+                # classification stores them in CAPTCHA flow instead of direct.
+                if _is_protected_or_auto_link(resolved_url):
+                    links.append([resolved_url, "filecrypt"])
+                    continue
+
+                if not link_hostname and resolved_url:
                     link_hostname = urlparse(resolved_url).hostname
 
-                if (
-                    resolved_url
-                    and link_hostname
-                    and link_hostname.startswith(
-                        ("ddownload", "rapidgator", "turbobit", "filecrypt")
-                    )
+                if link_hostname and link_hostname.startswith(
+                    ("ddownload", "rapidgator", "turbobit", "filecrypt")
                 ):
                     if "rapidgator" in link_hostname:
                         links.insert(0, [resolved_url, link_hostname])
